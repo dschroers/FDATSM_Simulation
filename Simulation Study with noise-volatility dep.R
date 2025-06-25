@@ -1,7 +1,7 @@
 ##########################################################################################
 ##########################################################################################
 ##########################################################################################
-#################Replication Code for the article##############ä##########################
+#################Replication Code for the article: Part with leverage##############ä##########################
 ###"Dynamically Consistent Analysis of Realized Covariations in Term Structure Models"####
 ############by Dennis Schroers############################################################
 ##########################################################################################
@@ -196,34 +196,27 @@ library(splines)
 
 }#from the FDATSM package
 {
+  CIR.SIM.EULER <- function(kappa = 1.5, mu = 0.58, b = 0.5, x0 = 1,START = 0, END = 1, DELTA = 0.001) {
 
-  CIR.SIM<-function(kappa = 1.5, mu= 0.58, b= 0.5, x0= 1, START = 0, END = 1, DELTA=0.001){
+    time <- seq(START, END, by = DELTA)
+    N <- length(time)
+    X <- numeric(N)
+    X[1] <- x0
 
-    SAMPLE.SIZE <- as.integer((END-START)/DELTA)
-    c <- (b^2)*(1-exp(-kappa*DELTA))/(4*kappa)
-    lambda.0 <- exp(-kappa*DELTA)/c
-    r <- numeric(SAMPLE.SIZE)
-    r[1] <- x0
-    d.param <- 4*mu*kappa/(b^2)
-    NOR <- rnorm(SAMPLE.SIZE,0,1)
-    CHI <- rchisq(SAMPLE.SIZE, df= d.param-1, ncp = 0)
+    dW <- rnorm(N - 1, mean = 0, sd = sqrt(DELTA))  # Precompute Brownian increments
 
-    for (i in 1:(SAMPLE.SIZE-1)) {
-      r[i+1] <- c*((NOR[i]+sqrt(r[i]*lambda.0))^2+CHI[i])
+    for (i in 1:(N - 1)) {
+      X[i + 1] <- X[i] + kappa * (mu - X[i]) * DELTA + b * sqrt(pmax(X[i], 0)) * dW[i]
+      X[i + 1] <- pmax(X[i + 1], 0)  # Enforce non-negativity
     }
 
-    TIME <- seq(START, END, by = DELTA)
-
-    if(SAMPLE.SIZE < length(TIME)){
-      TIME = TIME[-length(TIME)]
-    }
-    return(list("Y" = r, "T" = TIME))
+    return(list("Y" = X, "T" = time, "dW" = dW))
   }
-  #simulates from a CIR process from START to END with resolution DELTA
+  #simulates from a CIR process by an Euler-Maruyama scheme from START to END with resolution DELTA
 
 
   ###Simulator--main simulation function
-  Simulator<-function(kappa = 1.5, #Reversion rate for scalar volatility process
+  Simulator_with_leverage<-function(kappa = 1.5, #Reversion rate for scalar volatility process
                       mu= 0.058, #Level for scalar volatility process
                       b= 0.05, #Volatility of scalar volatility process
                       x0= 0.058, #Initial volatility for scalar volatility process
@@ -232,19 +225,31 @@ library(splines)
                       Q=q.100, #Noise covariance of the continuous driver
                       rho.1=0.02, #Jump hight, first jump process
                       rho.2 =0.01, #Jump hight, second jumps process
-                      f0=numeric(1000) #Initial forward curve
+                      f0=numeric(1000), #Initial forward curve
+                      corr = -.5 #leverage
   ){
     {
       Vol.driver.integrals<-numeric(n)
-      CIR <- CIR.SIM(kappa = kappa, mu= mu, b= b, x0= x0, START = 0, END = 1, DELTA=1/(n*100))
+      DW<-numeric(n)
+      CIR <- CIR.SIM.EULER(kappa = kappa, mu= mu, b= b, x0= x0, START = 0, END = 1, DELTA=1/(n*100))
+
+
+
+
       for (i in 2:n) {
         Vol.driver.integrals[i] <- sum(CIR$Y[((i-1)*100):(i*100)]^2)/(n*100)
+        DW[i]<- sum(CIR$dW[((i-1)*100):(i*100)])
       }#calculate integrated volatilities
-
 
       kernel.samples <- mvrnorm(n = n, numeric(M+n), Q, tol = 1e-3)# simulate discretized increments of a Q-Wiener process
       #observe that we have to sample 1100 instead of 1000 noise innovations,
       #to avoid boundary problems at maximal maturity.
+      for (i in 1:n) {
+        kernel.samples[i,]<-(corr*kernel.samples[i,])+(sqrt(1-corr^2)*DW[i]*10*(numeric(M+n)+1/10)) #/10 since we want to normalize the new covariance of the Wiener process
+      }
+
+
+
 
       samples <- matrix(0,n,(M+n))
       samples[1,] <- f0
@@ -340,13 +345,17 @@ library(splines)
     }
 
     #Calculate also the simulated quadratic variation/integrated volatility
-    IV <- sum(Vol.driver.integrals)*Q[(1:(M-1)),(1:(M-1))]
+    v<- (numeric(999)+1/10)
+    target_cov <- (corr^2) * Q[1:999, 1:999] + (1 - corr^2) * (v%*%t(v))
 
-    return(list("Prices" = Price.Data, "Prices.cont" = Cont.Price.Data, "IV"= IV ))
+
+    IV <- sum(Vol.driver.integrals)* target_cov
+
+
+        return(list("Prices" = Price.Data, "Prices.cont" = Cont.Price.Data, "IV"= IV ))
   }
 
 }#for the simulation
-
 
 
 ##Metaparameters & initializations
@@ -416,266 +425,266 @@ K=500 #Number of Monte-Carlo runs
 
 
 
+{
+  #norms of the true quadratic variations
+  normIV<-numeric(K)
+
+  #S1
   {
-    #norms of the true quadratic variations
-    normIV<-numeric(K)
-
-    #S1
-  {
 
 
 
-  M1.L00.Err<-numeric(K)
-  M2.L00.Err<-numeric(K)
-  M3.L3.Err<-numeric(K)
-  M3.L4.Err<-numeric(K)
-  M3.L5.Err<-numeric(K)
-  M4.L3.Err<-numeric(K)
-  M4.L4.Err<-numeric(K)
-  M4.L5.Err<-numeric(K)
+    M1.L00.Err<-numeric(K)
+    M2.L00.Err<-numeric(K)
+    M3.L3.Err<-numeric(K)
+    M3.L4.Err<-numeric(K)
+    M3.L5.Err<-numeric(K)
+    M4.L3.Err<-numeric(K)
+    M4.L4.Err<-numeric(K)
+    M4.L5.Err<-numeric(K)
 
-  M1.L00.dimensionality.85<-numeric(K)
-  M2.L00.dimensionality.85<-numeric(K)
-  M3.L3.dimensionality.85<-numeric(K)
-  M3.L4.dimensionality.85<-numeric(K)
-  M3.L5.dimensionality.85<-numeric(K)
-  M4.L3.dimensionality.85<-numeric(K)
-  M4.L4.dimensionality.85<-numeric(K)
-  M4.L5.dimensionality.85<-numeric(K)
+    M1.L00.dimensionality.85<-numeric(K)
+    M2.L00.dimensionality.85<-numeric(K)
+    M3.L3.dimensionality.85<-numeric(K)
+    M3.L4.dimensionality.85<-numeric(K)
+    M3.L5.dimensionality.85<-numeric(K)
+    M4.L3.dimensionality.85<-numeric(K)
+    M4.L4.dimensionality.85<-numeric(K)
+    M4.L5.dimensionality.85<-numeric(K)
 
-  M1.L00.dimensionality.90<-numeric(K)
-  M2.L00.dimensionality.90<-numeric(K)
-  M3.L3.dimensionality.90<-numeric(K)
-  M3.L4.dimensionality.90<-numeric(K)
-  M3.L5.dimensionality.90<-numeric(K)
-  M4.L3.dimensionality.90<-numeric(K)
-  M4.L4.dimensionality.90<-numeric(K)
-  M4.L5.dimensionality.90<-numeric(K)
+    M1.L00.dimensionality.90<-numeric(K)
+    M2.L00.dimensionality.90<-numeric(K)
+    M3.L3.dimensionality.90<-numeric(K)
+    M3.L4.dimensionality.90<-numeric(K)
+    M3.L5.dimensionality.90<-numeric(K)
+    M4.L3.dimensionality.90<-numeric(K)
+    M4.L4.dimensionality.90<-numeric(K)
+    M4.L5.dimensionality.90<-numeric(K)
 
-  M1.L00.dimensionality.95<-numeric(K)
-  M2.L00.dimensionality.95<-numeric(K)
-  M3.L3.dimensionality.95<-numeric(K)
-  M3.L4.dimensionality.95<-numeric(K)
-  M3.L5.dimensionality.95<-numeric(K)
-  M4.L3.dimensionality.95<-numeric(K)
-  M4.L4.dimensionality.95<-numeric(K)
-  M4.L5.dimensionality.95<-numeric(K)
+    M1.L00.dimensionality.95<-numeric(K)
+    M2.L00.dimensionality.95<-numeric(K)
+    M3.L3.dimensionality.95<-numeric(K)
+    M3.L4.dimensionality.95<-numeric(K)
+    M3.L5.dimensionality.95<-numeric(K)
+    M4.L3.dimensionality.95<-numeric(K)
+    M4.L4.dimensionality.95<-numeric(K)
+    M4.L5.dimensionality.95<-numeric(K)
 
-  M1.L00.dimensionality.99<-numeric(K)
-  M2.L00.dimensionality.99<-numeric(K)
-  M3.L3.dimensionality.99<-numeric(K)
-  M3.L4.dimensionality.99<-numeric(K)
-  M3.L5.dimensionality.99<-numeric(K)
-  M4.L3.dimensionality.99<-numeric(K)
-  M4.L4.dimensionality.99<-numeric(K)
-  M4.L5.dimensionality.99<-numeric(K)
+    M1.L00.dimensionality.99<-numeric(K)
+    M2.L00.dimensionality.99<-numeric(K)
+    M3.L3.dimensionality.99<-numeric(K)
+    M3.L4.dimensionality.99<-numeric(K)
+    M3.L5.dimensionality.99<-numeric(K)
+    M4.L3.dimensionality.99<-numeric(K)
+    M4.L4.dimensionality.99<-numeric(K)
+    M4.L5.dimensionality.99<-numeric(K)
 
   }
 
-    #S2
-    {
-      Proj.M1.L00.Err<-numeric(K)
-      Proj.M2.L00.Err<-numeric(K)
-      Proj.M3.L3.Err<-numeric(K)
-      Proj.M3.L4.Err<-numeric(K)
-      Proj.M3.L5.Err<-numeric(K)
-      Proj.M4.L3.Err<-numeric(K)
-      Proj.M4.L4.Err<-numeric(K)
-      Proj.M4.L5.Err<-numeric(K)
+  #S2
+  {
+    Proj.M1.L00.Err<-numeric(K)
+    Proj.M2.L00.Err<-numeric(K)
+    Proj.M3.L3.Err<-numeric(K)
+    Proj.M3.L4.Err<-numeric(K)
+    Proj.M3.L5.Err<-numeric(K)
+    Proj.M4.L3.Err<-numeric(K)
+    Proj.M4.L4.Err<-numeric(K)
+    Proj.M4.L5.Err<-numeric(K)
 
 
-      Proj.M1.L00.dimensionality.85<-numeric(K)
-      Proj.M2.L00.dimensionality.85<-numeric(K)
-      Proj.M3.L3.dimensionality.85<-numeric(K)
-      Proj.M3.L4.dimensionality.85<-numeric(K)
-      Proj.M3.L5.dimensionality.85<-numeric(K)
-      Proj.M4.L3.dimensionality.85<-numeric(K)
-      Proj.M4.L4.dimensionality.85<-numeric(K)
-      Proj.M4.L5.dimensionality.85<-numeric(K)
+    Proj.M1.L00.dimensionality.85<-numeric(K)
+    Proj.M2.L00.dimensionality.85<-numeric(K)
+    Proj.M3.L3.dimensionality.85<-numeric(K)
+    Proj.M3.L4.dimensionality.85<-numeric(K)
+    Proj.M3.L5.dimensionality.85<-numeric(K)
+    Proj.M4.L3.dimensionality.85<-numeric(K)
+    Proj.M4.L4.dimensionality.85<-numeric(K)
+    Proj.M4.L5.dimensionality.85<-numeric(K)
 
-      Proj.M1.L00.dimensionality.90<-numeric(K)
-      Proj.M2.L00.dimensionality.90<-numeric(K)
-      Proj.M3.L3.dimensionality.90<-numeric(K)
-      Proj.M3.L4.dimensionality.90<-numeric(K)
-      Proj.M3.L5.dimensionality.90<-numeric(K)
-      Proj.M4.L3.dimensionality.90<-numeric(K)
-      Proj.M4.L4.dimensionality.90<-numeric(K)
-      Proj.M4.L5.dimensionality.90<-numeric(K)
+    Proj.M1.L00.dimensionality.90<-numeric(K)
+    Proj.M2.L00.dimensionality.90<-numeric(K)
+    Proj.M3.L3.dimensionality.90<-numeric(K)
+    Proj.M3.L4.dimensionality.90<-numeric(K)
+    Proj.M3.L5.dimensionality.90<-numeric(K)
+    Proj.M4.L3.dimensionality.90<-numeric(K)
+    Proj.M4.L4.dimensionality.90<-numeric(K)
+    Proj.M4.L5.dimensionality.90<-numeric(K)
 
-      Proj.M1.L00.dimensionality.95<-numeric(K)
-      Proj.M2.L00.dimensionality.95<-numeric(K)
-      Proj.M3.L3.dimensionality.95<-numeric(K)
-      Proj.M3.L4.dimensionality.95<-numeric(K)
-      Proj.M3.L5.dimensionality.95<-numeric(K)
-      Proj.M4.L3.dimensionality.95<-numeric(K)
-      Proj.M4.L4.dimensionality.95<-numeric(K)
-      Proj.M4.L5.dimensionality.95<-numeric(K)
+    Proj.M1.L00.dimensionality.95<-numeric(K)
+    Proj.M2.L00.dimensionality.95<-numeric(K)
+    Proj.M3.L3.dimensionality.95<-numeric(K)
+    Proj.M3.L4.dimensionality.95<-numeric(K)
+    Proj.M3.L5.dimensionality.95<-numeric(K)
+    Proj.M4.L3.dimensionality.95<-numeric(K)
+    Proj.M4.L4.dimensionality.95<-numeric(K)
+    Proj.M4.L5.dimensionality.95<-numeric(K)
 
-      Proj.M1.L00.dimensionality.99<-numeric(K)
-      Proj.M2.L00.dimensionality.99<-numeric(K)
-      Proj.M3.L3.dimensionality.99<-numeric(K)
-      Proj.M3.L4.dimensionality.99<-numeric(K)
-      Proj.M3.L5.dimensionality.99<-numeric(K)
-      Proj.M4.L3.dimensionality.99<-numeric(K)
-      Proj.M4.L4.dimensionality.99<-numeric(K)
-      Proj.M4.L5.dimensionality.99<-numeric(K)
+    Proj.M1.L00.dimensionality.99<-numeric(K)
+    Proj.M2.L00.dimensionality.99<-numeric(K)
+    Proj.M3.L3.dimensionality.99<-numeric(K)
+    Proj.M3.L4.dimensionality.99<-numeric(K)
+    Proj.M3.L5.dimensionality.99<-numeric(K)
+    Proj.M4.L3.dimensionality.99<-numeric(K)
+    Proj.M4.L4.dimensionality.99<-numeric(K)
+    Proj.M4.L5.dimensionality.99<-numeric(K)
 
-      logdiff.explavar1 <- matrix(0,K,10)
-      logdiff.explavar2 <- matrix(0,K,10)
-      logdiff.explavar3 <- matrix(0,K,10)
-      logdiff.explavar4 <- matrix(0,K,10)
+    logdiff.explavar1 <- matrix(0,K,10)
+    logdiff.explavar2 <- matrix(0,K,10)
+    logdiff.explavar3 <- matrix(0,K,10)
+    logdiff.explavar4 <- matrix(0,K,10)
 
-    }
+  }
 
-    #S3
-    {
-      Cov.Proj.M1.L00.Err<-numeric(K)
-      Cov.Proj.M2.L00.Err<-numeric(K)
-      Cov.Proj.M3.L3.Err<-numeric(K)
-      Cov.Proj.M3.L4.Err<-numeric(K)
-      Cov.Proj.M3.L5.Err<-numeric(K)
-      Cov.Proj.M4.L3.Err<-numeric(K)
-      Cov.Proj.M4.L4.Err<-numeric(K)
-      Cov.Proj.M4.L5.Err<-numeric(K)
-
-
-      Cov.Proj.M1.L00.dimensionality.85<-numeric(K)
-      Cov.Proj.M2.L00.dimensionality.85<-numeric(K)
-      Cov.Proj.M3.L3.dimensionality.85<-numeric(K)
-      Cov.Proj.M3.L4.dimensionality.85<-numeric(K)
-      Cov.Proj.M3.L5.dimensionality.85<-numeric(K)
-      Cov.Proj.M4.L3.dimensionality.85<-numeric(K)
-      Cov.Proj.M4.L4.dimensionality.85<-numeric(K)
-      Cov.Proj.M4.L5.dimensionality.85<-numeric(K)
-
-      Cov.Proj.M1.L00.dimensionality.90<-numeric(K)
-      Cov.Proj.M2.L00.dimensionality.90<-numeric(K)
-      Cov.Proj.M3.L3.dimensionality.90<-numeric(K)
-      Cov.Proj.M3.L4.dimensionality.90<-numeric(K)
-      Cov.Proj.M3.L5.dimensionality.90<-numeric(K)
-      Cov.Proj.M4.L3.dimensionality.90<-numeric(K)
-      Cov.Proj.M4.L4.dimensionality.90<-numeric(K)
-      Cov.Proj.M4.L5.dimensionality.90<-numeric(K)
-
-      Cov.Proj.M1.L00.dimensionality.95<-numeric(K)
-      Cov.Proj.M2.L00.dimensionality.95<-numeric(K)
-      Cov.Proj.M3.L3.dimensionality.95<-numeric(K)
-      Cov.Proj.M3.L4.dimensionality.95<-numeric(K)
-      Cov.Proj.M3.L5.dimensionality.95<-numeric(K)
-      Cov.Proj.M4.L3.dimensionality.95<-numeric(K)
-      Cov.Proj.M4.L4.dimensionality.95<-numeric(K)
-      Cov.Proj.M4.L5.dimensionality.95<-numeric(K)
-
-      Cov.Proj.M1.L00.dimensionality.99<-numeric(K)
-      Cov.Proj.M2.L00.dimensionality.99<-numeric(K)
-      Cov.Proj.M3.L3.dimensionality.99<-numeric(K)
-      Cov.Proj.M3.L4.dimensionality.99<-numeric(K)
-      Cov.Proj.M3.L5.dimensionality.99<-numeric(K)
-      Cov.Proj.M4.L3.dimensionality.99<-numeric(K)
-      Cov.Proj.M4.L4.dimensionality.99<-numeric(K)
-      Cov.Proj.M4.L5.dimensionality.99<-numeric(K)
-
-      Cov.explavar1 <- matrix(0,K,10)
-      Cov.explavar2 <- matrix(0,K,10)
-      Cov.explavar3 <- matrix(0,K,10)
-      Cov.explavar4 <- matrix(0,K,10)
-
-    }
-
-    #S4
-    {
-      excess.Proj.M1.L00.Err<-numeric(K)
-      excess.Proj.M2.L00.Err<-numeric(K)
-      excess.Proj.M3.L3.Err<-numeric(K)
-      excess.Proj.M3.L4.Err<-numeric(K)
-      excess.Proj.M3.L5.Err<-numeric(K)
-      excess.Proj.M4.L3.Err<-numeric(K)
-      excess.Proj.M4.L4.Err<-numeric(K)
-      excess.Proj.M4.L5.Err<-numeric(K)
+  #S3
+  {
+    Cov.Proj.M1.L00.Err<-numeric(K)
+    Cov.Proj.M2.L00.Err<-numeric(K)
+    Cov.Proj.M3.L3.Err<-numeric(K)
+    Cov.Proj.M3.L4.Err<-numeric(K)
+    Cov.Proj.M3.L5.Err<-numeric(K)
+    Cov.Proj.M4.L3.Err<-numeric(K)
+    Cov.Proj.M4.L4.Err<-numeric(K)
+    Cov.Proj.M4.L5.Err<-numeric(K)
 
 
-      excess.Proj.M1.L00.dimensionality.85<-numeric(K)
-      excess.Proj.M2.L00.dimensionality.85<-numeric(K)
-      excess.Proj.M3.L3.dimensionality.85<-numeric(K)
-      excess.Proj.M3.L4.dimensionality.85<-numeric(K)
-      excess.Proj.M3.L5.dimensionality.85<-numeric(K)
-      excess.Proj.M4.L3.dimensionality.85<-numeric(K)
-      excess.Proj.M4.L4.dimensionality.85<-numeric(K)
-      excess.Proj.M4.L5.dimensionality.85<-numeric(K)
+    Cov.Proj.M1.L00.dimensionality.85<-numeric(K)
+    Cov.Proj.M2.L00.dimensionality.85<-numeric(K)
+    Cov.Proj.M3.L3.dimensionality.85<-numeric(K)
+    Cov.Proj.M3.L4.dimensionality.85<-numeric(K)
+    Cov.Proj.M3.L5.dimensionality.85<-numeric(K)
+    Cov.Proj.M4.L3.dimensionality.85<-numeric(K)
+    Cov.Proj.M4.L4.dimensionality.85<-numeric(K)
+    Cov.Proj.M4.L5.dimensionality.85<-numeric(K)
 
-      excess.Proj.M1.L00.dimensionality.90<-numeric(K)
-      excess.Proj.M2.L00.dimensionality.90<-numeric(K)
-      excess.Proj.M3.L3.dimensionality.90<-numeric(K)
-      excess.Proj.M3.L4.dimensionality.90<-numeric(K)
-      excess.Proj.M3.L5.dimensionality.90<-numeric(K)
-      excess.Proj.M4.L3.dimensionality.90<-numeric(K)
-      excess.Proj.M4.L4.dimensionality.90<-numeric(K)
-      excess.Proj.M4.L5.dimensionality.90<-numeric(K)
+    Cov.Proj.M1.L00.dimensionality.90<-numeric(K)
+    Cov.Proj.M2.L00.dimensionality.90<-numeric(K)
+    Cov.Proj.M3.L3.dimensionality.90<-numeric(K)
+    Cov.Proj.M3.L4.dimensionality.90<-numeric(K)
+    Cov.Proj.M3.L5.dimensionality.90<-numeric(K)
+    Cov.Proj.M4.L3.dimensionality.90<-numeric(K)
+    Cov.Proj.M4.L4.dimensionality.90<-numeric(K)
+    Cov.Proj.M4.L5.dimensionality.90<-numeric(K)
 
-      excess.Proj.M1.L00.dimensionality.95<-numeric(K)
-      excess.Proj.M2.L00.dimensionality.95<-numeric(K)
-      excess.Proj.M3.L3.dimensionality.95<-numeric(K)
-      excess.Proj.M3.L4.dimensionality.95<-numeric(K)
-      excess.Proj.M3.L5.dimensionality.95<-numeric(K)
-      excess.Proj.M4.L3.dimensionality.95<-numeric(K)
-      excess.Proj.M4.L4.dimensionality.95<-numeric(K)
-      excess.Proj.M4.L5.dimensionality.95<-numeric(K)
+    Cov.Proj.M1.L00.dimensionality.95<-numeric(K)
+    Cov.Proj.M2.L00.dimensionality.95<-numeric(K)
+    Cov.Proj.M3.L3.dimensionality.95<-numeric(K)
+    Cov.Proj.M3.L4.dimensionality.95<-numeric(K)
+    Cov.Proj.M3.L5.dimensionality.95<-numeric(K)
+    Cov.Proj.M4.L3.dimensionality.95<-numeric(K)
+    Cov.Proj.M4.L4.dimensionality.95<-numeric(K)
+    Cov.Proj.M4.L5.dimensionality.95<-numeric(K)
 
-      excess.Proj.M1.L00.dimensionality.99<-numeric(K)
-      excess.Proj.M2.L00.dimensionality.99<-numeric(K)
-      excess.Proj.M3.L3.dimensionality.99<-numeric(K)
-      excess.Proj.M3.L4.dimensionality.99<-numeric(K)
-      excess.Proj.M3.L5.dimensionality.99<-numeric(K)
-      excess.Proj.M4.L3.dimensionality.99<-numeric(K)
-      excess.Proj.M4.L4.dimensionality.99<-numeric(K)
-      excess.Proj.M4.L5.dimensionality.99<-numeric(K)
+    Cov.Proj.M1.L00.dimensionality.99<-numeric(K)
+    Cov.Proj.M2.L00.dimensionality.99<-numeric(K)
+    Cov.Proj.M3.L3.dimensionality.99<-numeric(K)
+    Cov.Proj.M3.L4.dimensionality.99<-numeric(K)
+    Cov.Proj.M3.L5.dimensionality.99<-numeric(K)
+    Cov.Proj.M4.L3.dimensionality.99<-numeric(K)
+    Cov.Proj.M4.L4.dimensionality.99<-numeric(K)
+    Cov.Proj.M4.L5.dimensionality.99<-numeric(K)
 
+    Cov.explavar1 <- matrix(0,K,10)
+    Cov.explavar2 <- matrix(0,K,10)
+    Cov.explavar3 <- matrix(0,K,10)
+    Cov.explavar4 <- matrix(0,K,10)
 
-      excess.explavar1 <- matrix(0, K , 10)
-      excess.explavar2 <- matrix(0, K , 10)
-      excess.explavar3 <- matrix(0, K , 10)
-      excess.explavar4 <- matrix(0, K , 10)
-    }
-  }#define the Monte-Carlo sample vectors
+  }
 
-  set.seed(123)#to reproduce the results
-  ptm <-proc.time()
-  for (step in 1:K) {
-    DATA <- Simulator(kappa = 1.5, mu= .058, b= .05, x0= 0.058,Q=q.50, lambda.1=1, lambda.2=4, rho.1=0.0116, rho.2 =0.0029, f0=Initial.fw)
-
-
-
-    M1.price.data <- DATA$Prices.cont
-    M2.price.data <- matrix(0,n,M+1)
-    M3.price.data <- DATA$Prices
-    M4.price.data <- matrix(0,n,M+1)
+  #S4
+  {
+    excess.Proj.M1.L00.Err<-numeric(K)
+    excess.Proj.M2.L00.Err<-numeric(K)
+    excess.Proj.M3.L3.Err<-numeric(K)
+    excess.Proj.M3.L4.Err<-numeric(K)
+    excess.Proj.M3.L5.Err<-numeric(K)
+    excess.Proj.M4.L3.Err<-numeric(K)
+    excess.Proj.M4.L4.Err<-numeric(K)
+    excess.Proj.M4.L5.Err<-numeric(K)
 
 
-    {
-      sparseness = 100
+    excess.Proj.M1.L00.dimensionality.85<-numeric(K)
+    excess.Proj.M2.L00.dimensionality.85<-numeric(K)
+    excess.Proj.M3.L3.dimensionality.85<-numeric(K)
+    excess.Proj.M3.L4.dimensionality.85<-numeric(K)
+    excess.Proj.M3.L5.dimensionality.85<-numeric(K)
+    excess.Proj.M4.L3.dimensionality.85<-numeric(K)
+    excess.Proj.M4.L4.dimensionality.85<-numeric(K)
+    excess.Proj.M4.L5.dimensionality.85<-numeric(K)
 
-      X.Sparse <- matrix(0,n,sparseness)
-      M1.price.data.Sparse <- matrix(0,n,sparseness)
-      M3.price.data.Sparse <- matrix(0,n,sparseness)
-      for (z in 1:n) {
-        Errors <- rnorm(sparseness, 0, noise.level)
-        X.Sparse[z,] <- sort(sample(1:M, size = sparseness, prob = probs))
-        M1.price.data.Sparse[z,] <- M1.price.data[z,X.Sparse[z,]]+Errors
-        M3.price.data.Sparse[z,] <- M3.price.data[z,X.Sparse[z,]]+Errors
-      }###Derive sparse and noisy samples (100 out of 1000 points)
+    excess.Proj.M1.L00.dimensionality.90<-numeric(K)
+    excess.Proj.M2.L00.dimensionality.90<-numeric(K)
+    excess.Proj.M3.L3.dimensionality.90<-numeric(K)
+    excess.Proj.M3.L4.dimensionality.90<-numeric(K)
+    excess.Proj.M3.L5.dimensionality.90<-numeric(K)
+    excess.Proj.M4.L3.dimensionality.90<-numeric(K)
+    excess.Proj.M4.L4.dimensionality.90<-numeric(K)
+    excess.Proj.M4.L5.dimensionality.90<-numeric(K)
 
-    }#Calculate the sparse & noisy price data
-    for (i in 1:n) {
-      SS.1 <- ss(x = X.Sparse[i,], y = M1.price.data.Sparse[i,], method = "BIC", m=3)
-      M2.price.data[i,] <- predict(SS.1, 1:(M+1))$y
-      SS.2 <- ss(x = X.Sparse[i,], y = M3.price.data.Sparse[i,], method = "BIC", m=3)
-      M4.price.data[i,] <- predict(SS.2, 1:(M+1))$y
-    }#Calculate the smoothed log price data
+    excess.Proj.M1.L00.dimensionality.95<-numeric(K)
+    excess.Proj.M2.L00.dimensionality.95<-numeric(K)
+    excess.Proj.M3.L3.dimensionality.95<-numeric(K)
+    excess.Proj.M3.L4.dimensionality.95<-numeric(K)
+    excess.Proj.M3.L5.dimensionality.95<-numeric(K)
+    excess.Proj.M4.L3.dimensionality.95<-numeric(K)
+    excess.Proj.M4.L4.dimensionality.95<-numeric(K)
+    excess.Proj.M4.L5.dimensionality.95<-numeric(K)
 
-    Integrated.Volatility <- DATA$IV*(100^2)#Calculate the true quadratic covariation
-    normIV[step] <- L2_HS_norm(Integrated.Volatility, from = 0, to = 10)#Calculate the norm of  true quadratic covariation
-    # For Scenario S1: (unprojected data)
-    {
+    excess.Proj.M1.L00.dimensionality.99<-numeric(K)
+    excess.Proj.M2.L00.dimensionality.99<-numeric(K)
+    excess.Proj.M3.L3.dimensionality.99<-numeric(K)
+    excess.Proj.M3.L4.dimensionality.99<-numeric(K)
+    excess.Proj.M3.L5.dimensionality.99<-numeric(K)
+    excess.Proj.M4.L3.dimensionality.99<-numeric(K)
+    excess.Proj.M4.L4.dimensionality.99<-numeric(K)
+    excess.Proj.M4.L5.dimensionality.99<-numeric(K)
+
+
+    excess.explavar1 <- matrix(0, K , 10)
+    excess.explavar2 <- matrix(0, K , 10)
+    excess.explavar3 <- matrix(0, K , 10)
+    excess.explavar4 <- matrix(0, K , 10)
+  }
+}#define the Monte-Carlo sample vectors
+
+set.seed(123)#to reproduce the results
+ptm <-proc.time()
+for (step in 1:K) {
+  DATA <- Simulator_with_leverage(kappa = 1.5, mu= .058, b= .05, x0= 0.058,Q=q.50, lambda.1=1, lambda.2=4, rho.1=0.0116, rho.2 =0.0029, f0=Initial.fw)
+
+
+
+  M1.price.data <- DATA$Prices.cont
+  M2.price.data <- matrix(0,n,M+1)
+  M3.price.data <- DATA$Prices
+  M4.price.data <- matrix(0,n,M+1)
+
+
+  {
+    sparseness = 100
+
+    X.Sparse <- matrix(0,n,sparseness)
+    M1.price.data.Sparse <- matrix(0,n,sparseness)
+    M3.price.data.Sparse <- matrix(0,n,sparseness)
+    for (z in 1:n) {
+      Errors <- rnorm(sparseness, 0, noise.level)
+      X.Sparse[z,] <- sort(sample(1:M, size = sparseness, prob = probs))
+      M1.price.data.Sparse[z,] <- M1.price.data[z,X.Sparse[z,]]+Errors
+      M3.price.data.Sparse[z,] <- M3.price.data[z,X.Sparse[z,]]+Errors
+    }###Derive sparse and noisy samples (100 out of 1000 points)
+
+  }#Calculate the sparse & noisy price data
+  for (i in 1:n) {
+    SS.1 <- ss(x = X.Sparse[i,], y = M1.price.data.Sparse[i,], method = "BIC", m=3)
+    M2.price.data[i,] <- predict(SS.1, 1:(M+1))$y
+    SS.2 <- ss(x = X.Sparse[i,], y = M3.price.data.Sparse[i,], method = "BIC", m=3)
+    M4.price.data[i,] <- predict(SS.2, 1:(M+1))$y
+  }#Calculate the smoothed log price data
+
+  Integrated.Volatility <- DATA$IV*(100^2)#Calculate the true quadratic covariation
+  normIV[step] <- L2_HS_norm(Integrated.Volatility, from = 0, to = 10)#Calculate the norm of  true quadratic covariation
+  # For Scenario S1: (unprojected data)
+  {
     {
       M1.L00 <- tc(x= M1.price.data, sparse = sparsing, tq = 0.75,l = 10000)
 
@@ -741,8 +750,8 @@ K=500 #Number of Monte-Carlo runs
 
 
 
-       {
-         u<-min(ncol(M1.L00$IV),ncol(Integrated.Volatility))
+      {
+        u<-min(ncol(M1.L00$IV),ncol(Integrated.Volatility))
 
         M1.L00.Err[step]<-L2_HS_norm(M1.L00$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
 
@@ -759,30 +768,30 @@ K=500 #Number of Monte-Carlo runs
 
     }#Calculate the errors and dimensions
   }
-    # For Scenario S2: (data projected onto time-differenced log-price PCAs)
-    {
-    #make projections
+  # For Scenario S2: (data projected onto time-differenced log-price PCAs)
   {
-    E1 <- eigen(t(diff(M1.price.data))%*%diff(M1.price.data))
-    E2 <- eigen(t(diff(M2.price.data))%*%diff(M2.price.data))
-    E3 <- eigen(t(diff(M3.price.data))%*%diff(M3.price.data))
-    E4 <- eigen(t(diff(M4.price.data))%*%diff(M4.price.data))
+    #make projections
+    {
+      E1 <- eigen(t(diff(M1.price.data))%*%diff(M1.price.data))
+      E2 <- eigen(t(diff(M2.price.data))%*%diff(M2.price.data))
+      E3 <- eigen(t(diff(M3.price.data))%*%diff(M3.price.data))
+      E4 <- eigen(t(diff(M4.price.data))%*%diff(M4.price.data))
 
-    logdiff.explavar1[step,] <- (cumsum(E1$values)/sum(E1$values))[1:10]
-    logdiff.explavar2[step,] <- (cumsum(E2$values)/sum(E2$values))[1:10]
-    logdiff.explavar3[step,] <- (cumsum(E3$values)/sum(E3$values))[1:10]
-    logdiff.explavar4[step,] <- (cumsum(E4$values)/sum(E4$values))[1:10]
+      logdiff.explavar1[step,] <- (cumsum(E1$values)/sum(E1$values))[1:10]
+      logdiff.explavar2[step,] <- (cumsum(E2$values)/sum(E2$values))[1:10]
+      logdiff.explavar3[step,] <- (cumsum(E3$values)/sum(E3$values))[1:10]
+      logdiff.explavar4[step,] <- (cumsum(E4$values)/sum(E4$values))[1:10]
 
-    d1 <- which.max(logdiff.explavar1[step,]>.99)
-    d2 <- which.max(logdiff.explavar2[step,]>.99)
-    d3 <- which.max(logdiff.explavar3[step,]>.99)
-    d4 <- which.max(logdiff.explavar4[step,]>.99)
+      d1 <- which.max(logdiff.explavar1[step,]>.99)
+      d2 <- which.max(logdiff.explavar2[step,]>.99)
+      d3 <- which.max(logdiff.explavar3[step,]>.99)
+      d4 <- which.max(logdiff.explavar4[step,]>.99)
 
-    Proj.M1.price.data <- M1.price.data %*% E1$vectors[,1:d1] %*% t(E1$vectors[,1:d1])
-    Proj.M2.price.data <- M2.price.data %*% E2$vectors[,1:d2] %*% t(E2$vectors[,1:d2])
-    Proj.M3.price.data <- M3.price.data %*% E3$vectors[,1:d3] %*% t(E3$vectors[,1:d3])
-    Proj.M4.price.data <- M4.price.data %*% E4$vectors[,1:d4] %*% t(E4$vectors[,1:d4])
-  }
+      Proj.M1.price.data <- M1.price.data %*% E1$vectors[,1:d1] %*% t(E1$vectors[,1:d1])
+      Proj.M2.price.data <- M2.price.data %*% E2$vectors[,1:d2] %*% t(E2$vectors[,1:d2])
+      Proj.M3.price.data <- M3.price.data %*% E3$vectors[,1:d3] %*% t(E3$vectors[,1:d3])
+      Proj.M4.price.data <- M4.price.data %*% E4$vectors[,1:d4] %*% t(E4$vectors[,1:d4])
+    }
 
 
     {
@@ -798,7 +807,7 @@ K=500 #Number of Monte-Carlo runs
       Proj.M4.L4 <- tc(x= Proj.M4.price.data, sparse = sparsing, tq = 0.75,l = 4)
       Proj.M4.L5 <- tc(x= Proj.M4.price.data, sparse = sparsing, tq = 0.75,l = 5)
 
-        }#calculate the estimators
+    }#calculate the estimators
 
 
     {
@@ -866,9 +875,9 @@ K=500 #Number of Monte-Carlo runs
       }#errors
 
     }#Calculate the errors and dimensions
-}
-    # For Scenario S3: (data projected onto log-price PCAs)
-    {
+  }
+  # For Scenario S3: (data projected onto log-price PCAs)
+  {
     #make projections
     {
       E1 <- eigen(t(M1.price.data)%*%M1.price.data)
@@ -974,154 +983,154 @@ K=500 #Number of Monte-Carlo runs
 
     }#Calculate the errors and dimensions
 
-    }
+  }
 
-    # For Scenario S4: (data projected onto excess return PCAs)
+  # For Scenario S4: (data projected onto excess return PCAs)
+  {
+    #make projections
     {
-      #make projections
-      {
-        excess_ret1<-matrix(0,n-1,M)
-        excess_ret2<-matrix(0,n-1,M)
-        excess_ret3<-matrix(0,n-1,M)
-        excess_ret4<-matrix(0,n-1,M)
+      excess_ret1<-matrix(0,n-1,M)
+      excess_ret2<-matrix(0,n-1,M)
+      excess_ret3<-matrix(0,n-1,M)
+      excess_ret4<-matrix(0,n-1,M)
 
-        for (i in 1:(n-1)) {
-          excess_ret1[i,]<-(M1.price.data[i+1,1:M]-M1.price.data[i,2:(M+1)])-M1.price.data[i,1]
-          excess_ret2[i,]<-(M2.price.data[i+1,1:M]-M2.price.data[i,2:(M+1)])-M2.price.data[i,1]
-          excess_ret3[i,]<-(M3.price.data[i+1,1:M]-M3.price.data[i,2:(M+1)])-M3.price.data[i,1]
-          excess_ret4[i,]<-(M4.price.data[i+1,1:M]-M4.price.data[i,2:(M+1)])-M4.price.data[i,1]
-        }
-
-        E1 <- eigen(t(excess_ret1)%*%excess_ret1)
-        E2 <- eigen(t(excess_ret2)%*%excess_ret2)
-        E3 <- eigen(t(excess_ret3)%*%excess_ret3)
-        E4 <- eigen(t(excess_ret4)%*%excess_ret4)
-
-        excess.explavar1[step,] <- (cumsum(E1$values)/sum(E1$values))[1:10]
-        excess.explavar2[step,] <- (cumsum(E2$values)/sum(E2$values))[1:10]
-        excess.explavar3[step,] <- (cumsum(E3$values)/sum(E3$values))[1:10]
-        excess.explavar4[step,] <- (cumsum(E4$values)/sum(E4$values))[1:10]
-
-        d1 <- which.max(excess.explavar1[step,]>.99)
-        d2 <- which.max(excess.explavar2[step,]>.99)
-        d3 <- which.max(excess.explavar3[step,]>.99)
-        d4 <- which.max(excess.explavar4[step,]>.99)
-
-        excess.projections1 <- excess_ret1 %*% E1$vectors[,1:d1] %*% t(E1$vectors[,1:d1])
-        excess.projections2 <- excess_ret2 %*% E2$vectors[,1:d2] %*% t(E2$vectors[,1:d2])
-        excess.projections3 <- excess_ret3 %*% E3$vectors[,1:d3] %*% t(E3$vectors[,1:d3])
-        excess.projections4 <- excess_ret4 %*% E4$vectors[,1:d4] %*% t(E4$vectors[,1:d4])
-
-
-        excess.Proj.M1.price.data<-matrix(0,n,M)
-        excess.Proj.M2.price.data<-matrix(0,n,M)
-        excess.Proj.M3.price.data<-matrix(0,n,M)
-        excess.Proj.M4.price.data<-matrix(0,n,M)
-
-
-        excess.Proj.M1.price.data[1,]<-M1.price.data[1,1:M]
-        excess.Proj.M2.price.data[1,]<-M2.price.data[1,1:M]
-        excess.Proj.M3.price.data[1,]<-M3.price.data[1,1:M]
-        excess.Proj.M4.price.data[1,]<-M4.price.data[1,1:M]
-
-        # Recursively reconstruct
-        for (i in 1:(n - 1)) {
-          for (j in 1:(M-1)) {
-            excess.Proj.M1.price.data[i+1,j]<-excess.Proj.M1.price.data[i,j+1]+excess.projections1[i,j] +excess.projections1[i,1]
-            excess.Proj.M2.price.data[i+1,j]<-excess.Proj.M2.price.data[i,j+1]+excess.projections2[i,j] +excess.projections2[i,1]
-            excess.Proj.M3.price.data[i+1,j]<-excess.Proj.M3.price.data[i,j+1]+excess.projections3[i,j] +excess.projections3[i,1]
-            excess.Proj.M4.price.data[i+1,j]<-excess.Proj.M4.price.data[i,j+1]+excess.projections4[i,j] +excess.projections4[i,1]
-          }
-        }
-
+      for (i in 1:(n-1)) {
+        excess_ret1[i,]<-(M1.price.data[i+1,1:M]-M1.price.data[i,2:(M+1)])-M1.price.data[i,1]
+        excess_ret2[i,]<-(M2.price.data[i+1,1:M]-M2.price.data[i,2:(M+1)])-M2.price.data[i,1]
+        excess_ret3[i,]<-(M3.price.data[i+1,1:M]-M3.price.data[i,2:(M+1)])-M3.price.data[i,1]
+        excess_ret4[i,]<-(M4.price.data[i+1,1:M]-M4.price.data[i,2:(M+1)])-M4.price.data[i,1]
       }
 
-      {
-        excess.Proj.M1.L00 <- tc(x= excess.Proj.M1.price.data, sparse = sparsing, tq = 0.75,l = 10000)
+      E1 <- eigen(t(excess_ret1)%*%excess_ret1)
+      E2 <- eigen(t(excess_ret2)%*%excess_ret2)
+      E3 <- eigen(t(excess_ret3)%*%excess_ret3)
+      E4 <- eigen(t(excess_ret4)%*%excess_ret4)
 
-        excess.Proj.M2.L00 <- tc(x= excess.Proj.M2.price.data, sparse = sparsing, tq = 0.75,l = 10000)
+      excess.explavar1[step,] <- (cumsum(E1$values)/sum(E1$values))[1:10]
+      excess.explavar2[step,] <- (cumsum(E2$values)/sum(E2$values))[1:10]
+      excess.explavar3[step,] <- (cumsum(E3$values)/sum(E3$values))[1:10]
+      excess.explavar4[step,] <- (cumsum(E4$values)/sum(E4$values))[1:10]
 
-        excess.Proj.M3.L3 <- tc(x= excess.Proj.M3.price.data, sparse = sparsing, tq = 0.75,l = 3)
-        excess.Proj.M3.L4 <- tc(x= excess.Proj.M3.price.data, sparse = sparsing, tq = 0.75,l = 4)
-        excess.Proj.M3.L5 <- tc(x= excess.Proj.M3.price.data, sparse = sparsing, tq = 0.75,l = 5)
+      d1 <- which.max(excess.explavar1[step,]>.99)
+      d2 <- which.max(excess.explavar2[step,]>.99)
+      d3 <- which.max(excess.explavar3[step,]>.99)
+      d4 <- which.max(excess.explavar4[step,]>.99)
 
-        excess.Proj.M4.L3 <- tc(x= excess.Proj.M4.price.data, sparse = sparsing, tq = 0.75,l = 3)
-        excess.Proj.M4.L4 <- tc(x= excess.Proj.M4.price.data, sparse = sparsing, tq = 0.75,l = 4)
-        excess.Proj.M4.L5 <- tc(x= excess.Proj.M4.price.data, sparse = sparsing, tq = 0.75,l = 5)
-
-      }#calculate the estimators
-
-
-      {
-        {
-          excess.Proj.M1.L00.loadings <- excess.Proj.M1.L00$expl.var[1:20]
-          excess.Proj.M2.L00.loadings <- excess.Proj.M2.L00$expl.var[1:20]
-          excess.Proj.M3.L3.loadings <- excess.Proj.M3.L3$expl.var[1:20]
-          excess.Proj.M3.L4.loadings <- excess.Proj.M3.L4$expl.var[1:20]
-          excess.Proj.M3.L5.loadings <- excess.Proj.M3.L5$expl.var[1:20]
-          excess.Proj.M4.L3.loadings <- excess.Proj.M4.L3$expl.var[1:20]
-          excess.Proj.M4.L4.loadings <- excess.Proj.M4.L4$expl.var[1:20]
-          excess.Proj.M4.L5.loadings <- excess.Proj.M4.L5$expl.var[1:20]
-
-          excess.Proj.M1.L00.dimensionality.85[step] <- min(which(excess.Proj.M1.L00.loadings > .85))
-          excess.Proj.M2.L00.dimensionality.85[step] <- min(which(excess.Proj.M2.L00.loadings > .85))
-          excess.Proj.M3.L3.dimensionality.85[step] <- min(which(excess.Proj.M3.L3.loadings > .85))
-          excess.Proj.M3.L4.dimensionality.85[step] <- min(which(excess.Proj.M3.L4.loadings > .85))
-          excess.Proj.M3.L5.dimensionality.85[step] <- min(which(excess.Proj.M3.L5.loadings > .85))
-          excess.Proj.M4.L3.dimensionality.85[step] <- min(which(excess.Proj.M4.L3.loadings > .85))
-          excess.Proj.M4.L4.dimensionality.85[step] <- min(which(excess.Proj.M4.L4.loadings > .85))
-          excess.Proj.M4.L5.dimensionality.85[step] <- min(which(excess.Proj.M4.L5.loadings > .85))
-
-          excess.Proj.M1.L00.dimensionality.90[step] <- min(which(excess.Proj.M1.L00.loadings > .9))
-          excess.Proj.M2.L00.dimensionality.90[step] <- min(which(excess.Proj.M2.L00.loadings > .9))
-          excess.Proj.M3.L3.dimensionality.90[step] <- min(which(excess.Proj.M3.L3.loadings > .9))
-          excess.Proj.M3.L4.dimensionality.90[step] <- min(which(excess.Proj.M3.L4.loadings > .9))
-          excess.Proj.M3.L5.dimensionality.90[step] <- min(which(excess.Proj.M3.L5.loadings > .9))
-          excess.Proj.M4.L3.dimensionality.90[step] <- min(which(excess.Proj.M4.L3.loadings > .9))
-          excess.Proj.M4.L4.dimensionality.90[step] <- min(which(excess.Proj.M4.L4.loadings > .9))
-          excess.Proj.M4.L5.dimensionality.90[step] <- min(which(excess.Proj.M4.L5.loadings > .9))
-
-          excess.Proj.M1.L00.dimensionality.95[step] <- min(which(excess.Proj.M1.L00.loadings > .95))
-          excess.Proj.M2.L00.dimensionality.95[step] <- min(which(excess.Proj.M2.L00.loadings > .95))
-          excess.Proj.M3.L3.dimensionality.95[step] <- min(which(excess.Proj.M3.L3.loadings > .95))
-          excess.Proj.M3.L4.dimensionality.95[step] <- min(which(excess.Proj.M3.L4.loadings > .95))
-          excess.Proj.M3.L5.dimensionality.95[step] <- min(which(excess.Proj.M3.L5.loadings > .95))
-          excess.Proj.M4.L3.dimensionality.95[step] <- min(which(excess.Proj.M4.L3.loadings > .95))
-          excess.Proj.M4.L4.dimensionality.95[step] <- min(which(excess.Proj.M4.L4.loadings > .95))
-          excess.Proj.M4.L5.dimensionality.95[step] <- min(which(excess.Proj.M4.L5.loadings > .95))
-
-          excess.Proj.M1.L00.dimensionality.99[step] <- min(which(excess.Proj.M1.L00.loadings > .99))
-          excess.Proj.M2.L00.dimensionality.99[step] <- min(which(excess.Proj.M2.L00.loadings > .99))
-          excess.Proj.M3.L3.dimensionality.99[step] <- min(which(excess.Proj.M3.L3.loadings > .99))
-          excess.Proj.M3.L4.dimensionality.99[step] <- min(which(excess.Proj.M3.L4.loadings > .99))
-          excess.Proj.M3.L5.dimensionality.99[step] <- min(which(excess.Proj.M3.L5.loadings > .99))
-          excess.Proj.M4.L3.dimensionality.99[step] <- min(which(excess.Proj.M4.L3.loadings > .99))
-          excess.Proj.M4.L4.dimensionality.99[step] <- min(which(excess.Proj.M4.L4.loadings > .99))
-          excess.Proj.M4.L5.dimensionality.99[step] <- min(which(excess.Proj.M4.L5.loadings > .99))
-        }#dimensionalities
+      excess.projections1 <- excess_ret1 %*% E1$vectors[,1:d1] %*% t(E1$vectors[,1:d1])
+      excess.projections2 <- excess_ret2 %*% E2$vectors[,1:d2] %*% t(E2$vectors[,1:d2])
+      excess.projections3 <- excess_ret3 %*% E3$vectors[,1:d3] %*% t(E3$vectors[,1:d3])
+      excess.projections4 <- excess_ret4 %*% E4$vectors[,1:d4] %*% t(E4$vectors[,1:d4])
 
 
-        {u <- min(nrow(excess.Proj.M1.L00$IV),nrow(excess.Proj.M1.L00$IV))
+      excess.Proj.M1.price.data<-matrix(0,n,M)
+      excess.Proj.M2.price.data<-matrix(0,n,M)
+      excess.Proj.M3.price.data<-matrix(0,n,M)
+      excess.Proj.M4.price.data<-matrix(0,n,M)
 
-          excess.Proj.M1.L00.Err[step] <- L2_HS_norm(excess.Proj.M1.L00$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
 
-          excess.Proj.M2.L00.Err[step] <- L2_HS_norm(excess.Proj.M2.L00$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
+      excess.Proj.M1.price.data[1,]<-M1.price.data[1,1:M]
+      excess.Proj.M2.price.data[1,]<-M2.price.data[1,1:M]
+      excess.Proj.M3.price.data[1,]<-M3.price.data[1,1:M]
+      excess.Proj.M4.price.data[1,]<-M4.price.data[1,1:M]
 
-          excess.Proj.M3.L3.Err[step] <- L2_HS_norm(excess.Proj.M3.L3$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
-          excess.Proj.M3.L4.Err[step] <- L2_HS_norm(excess.Proj.M3.L4$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
-          excess.Proj.M3.L5.Err[step] <- L2_HS_norm(excess.Proj.M3.L5$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
-
-          excess.Proj.M4.L3.Err[step] <- L2_HS_norm(excess.Proj.M4.L3$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
-          excess.Proj.M4.L4.Err[step] <- L2_HS_norm(excess.Proj.M4.L4$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
-          excess.Proj.M4.L5.Err[step] <- L2_HS_norm(excess.Proj.M4.L5$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
-        }#errors
-
-      }#Calculate the errors and dimensions
+      # Recursively reconstruct
+      for (i in 1:(n - 1)) {
+        for (j in 1:(M-1)) {
+          excess.Proj.M1.price.data[i+1,j]<-excess.Proj.M1.price.data[i,j+1]+excess.projections1[i,j] +excess.projections1[i,1]
+          excess.Proj.M2.price.data[i+1,j]<-excess.Proj.M2.price.data[i,j+1]+excess.projections2[i,j] +excess.projections2[i,1]
+          excess.Proj.M3.price.data[i+1,j]<-excess.Proj.M3.price.data[i,j+1]+excess.projections3[i,j] +excess.projections3[i,1]
+          excess.Proj.M4.price.data[i+1,j]<-excess.Proj.M4.price.data[i,j+1]+excess.projections4[i,j] +excess.projections4[i,1]
+        }
+      }
 
     }
-    print(step/K)
-  }#Run the Monte-Carlo-Simulation
-  proc.time()-ptm
+
+    {
+      excess.Proj.M1.L00 <- tc(x= excess.Proj.M1.price.data, sparse = sparsing, tq = 0.75,l = 10000)
+
+      excess.Proj.M2.L00 <- tc(x= excess.Proj.M2.price.data, sparse = sparsing, tq = 0.75,l = 10000)
+
+      excess.Proj.M3.L3 <- tc(x= excess.Proj.M3.price.data, sparse = sparsing, tq = 0.75,l = 3)
+      excess.Proj.M3.L4 <- tc(x= excess.Proj.M3.price.data, sparse = sparsing, tq = 0.75,l = 4)
+      excess.Proj.M3.L5 <- tc(x= excess.Proj.M3.price.data, sparse = sparsing, tq = 0.75,l = 5)
+
+      excess.Proj.M4.L3 <- tc(x= excess.Proj.M4.price.data, sparse = sparsing, tq = 0.75,l = 3)
+      excess.Proj.M4.L4 <- tc(x= excess.Proj.M4.price.data, sparse = sparsing, tq = 0.75,l = 4)
+      excess.Proj.M4.L5 <- tc(x= excess.Proj.M4.price.data, sparse = sparsing, tq = 0.75,l = 5)
+
+    }#calculate the estimators
+
+
+    {
+      {
+        excess.Proj.M1.L00.loadings <- excess.Proj.M1.L00$expl.var[1:20]
+        excess.Proj.M2.L00.loadings <- excess.Proj.M2.L00$expl.var[1:20]
+        excess.Proj.M3.L3.loadings <- excess.Proj.M3.L3$expl.var[1:20]
+        excess.Proj.M3.L4.loadings <- excess.Proj.M3.L4$expl.var[1:20]
+        excess.Proj.M3.L5.loadings <- excess.Proj.M3.L5$expl.var[1:20]
+        excess.Proj.M4.L3.loadings <- excess.Proj.M4.L3$expl.var[1:20]
+        excess.Proj.M4.L4.loadings <- excess.Proj.M4.L4$expl.var[1:20]
+        excess.Proj.M4.L5.loadings <- excess.Proj.M4.L5$expl.var[1:20]
+
+        excess.Proj.M1.L00.dimensionality.85[step] <- min(which(excess.Proj.M1.L00.loadings > .85))
+        excess.Proj.M2.L00.dimensionality.85[step] <- min(which(excess.Proj.M2.L00.loadings > .85))
+        excess.Proj.M3.L3.dimensionality.85[step] <- min(which(excess.Proj.M3.L3.loadings > .85))
+        excess.Proj.M3.L4.dimensionality.85[step] <- min(which(excess.Proj.M3.L4.loadings > .85))
+        excess.Proj.M3.L5.dimensionality.85[step] <- min(which(excess.Proj.M3.L5.loadings > .85))
+        excess.Proj.M4.L3.dimensionality.85[step] <- min(which(excess.Proj.M4.L3.loadings > .85))
+        excess.Proj.M4.L4.dimensionality.85[step] <- min(which(excess.Proj.M4.L4.loadings > .85))
+        excess.Proj.M4.L5.dimensionality.85[step] <- min(which(excess.Proj.M4.L5.loadings > .85))
+
+        excess.Proj.M1.L00.dimensionality.90[step] <- min(which(excess.Proj.M1.L00.loadings > .9))
+        excess.Proj.M2.L00.dimensionality.90[step] <- min(which(excess.Proj.M2.L00.loadings > .9))
+        excess.Proj.M3.L3.dimensionality.90[step] <- min(which(excess.Proj.M3.L3.loadings > .9))
+        excess.Proj.M3.L4.dimensionality.90[step] <- min(which(excess.Proj.M3.L4.loadings > .9))
+        excess.Proj.M3.L5.dimensionality.90[step] <- min(which(excess.Proj.M3.L5.loadings > .9))
+        excess.Proj.M4.L3.dimensionality.90[step] <- min(which(excess.Proj.M4.L3.loadings > .9))
+        excess.Proj.M4.L4.dimensionality.90[step] <- min(which(excess.Proj.M4.L4.loadings > .9))
+        excess.Proj.M4.L5.dimensionality.90[step] <- min(which(excess.Proj.M4.L5.loadings > .9))
+
+        excess.Proj.M1.L00.dimensionality.95[step] <- min(which(excess.Proj.M1.L00.loadings > .95))
+        excess.Proj.M2.L00.dimensionality.95[step] <- min(which(excess.Proj.M2.L00.loadings > .95))
+        excess.Proj.M3.L3.dimensionality.95[step] <- min(which(excess.Proj.M3.L3.loadings > .95))
+        excess.Proj.M3.L4.dimensionality.95[step] <- min(which(excess.Proj.M3.L4.loadings > .95))
+        excess.Proj.M3.L5.dimensionality.95[step] <- min(which(excess.Proj.M3.L5.loadings > .95))
+        excess.Proj.M4.L3.dimensionality.95[step] <- min(which(excess.Proj.M4.L3.loadings > .95))
+        excess.Proj.M4.L4.dimensionality.95[step] <- min(which(excess.Proj.M4.L4.loadings > .95))
+        excess.Proj.M4.L5.dimensionality.95[step] <- min(which(excess.Proj.M4.L5.loadings > .95))
+
+        excess.Proj.M1.L00.dimensionality.99[step] <- min(which(excess.Proj.M1.L00.loadings > .99))
+        excess.Proj.M2.L00.dimensionality.99[step] <- min(which(excess.Proj.M2.L00.loadings > .99))
+        excess.Proj.M3.L3.dimensionality.99[step] <- min(which(excess.Proj.M3.L3.loadings > .99))
+        excess.Proj.M3.L4.dimensionality.99[step] <- min(which(excess.Proj.M3.L4.loadings > .99))
+        excess.Proj.M3.L5.dimensionality.99[step] <- min(which(excess.Proj.M3.L5.loadings > .99))
+        excess.Proj.M4.L3.dimensionality.99[step] <- min(which(excess.Proj.M4.L3.loadings > .99))
+        excess.Proj.M4.L4.dimensionality.99[step] <- min(which(excess.Proj.M4.L4.loadings > .99))
+        excess.Proj.M4.L5.dimensionality.99[step] <- min(which(excess.Proj.M4.L5.loadings > .99))
+      }#dimensionalities
+
+
+      {u <- min(nrow(excess.Proj.M1.L00$IV),nrow(excess.Proj.M1.L00$IV))
+
+        excess.Proj.M1.L00.Err[step] <- L2_HS_norm(excess.Proj.M1.L00$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
+
+        excess.Proj.M2.L00.Err[step] <- L2_HS_norm(excess.Proj.M2.L00$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
+
+        excess.Proj.M3.L3.Err[step] <- L2_HS_norm(excess.Proj.M3.L3$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
+        excess.Proj.M3.L4.Err[step] <- L2_HS_norm(excess.Proj.M3.L4$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
+        excess.Proj.M3.L5.Err[step] <- L2_HS_norm(excess.Proj.M3.L5$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
+
+        excess.Proj.M4.L3.Err[step] <- L2_HS_norm(excess.Proj.M4.L3$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
+        excess.Proj.M4.L4.Err[step] <- L2_HS_norm(excess.Proj.M4.L4$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
+        excess.Proj.M4.L5.Err[step] <- L2_HS_norm(excess.Proj.M4.L5$IV[1:u,1:u]-Integrated.Volatility[1:u,1:u], from = 0, to = 10)
+      }#errors
+
+    }#Calculate the errors and dimensions
+
+  }
+  print(step/K)
+}#Run the Monte-Carlo-Simulation
+proc.time()-ptm
 
 
 
@@ -1165,260 +1174,260 @@ K=500 #Number of Monte-Carlo runs
     results <- cbind("Model & truncation level (columns) \\errors and meas.dims.(rows)" = latex_labels, results)
   }#create a Dataframe containing the Monte-Carlo results
 
-#S1
+  #S1
   {
-###Calculate relative errors
+    ###Calculate relative errors
 
-med.M1.L00<-median(M1.L00.Err/normIV)
-quarts.M1.L00<-quantile(M1.L00.Err/normIV, c(.25,.75))
+    med.M1.L00<-median(M1.L00.Err/normIV)
+    quarts.M1.L00<-quantile(M1.L00.Err/normIV, c(.25,.75))
 
-results$`Model 1, l = ∞`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M1.L00,quarts.M1.L00[1],quarts.M1.L00[2])
+    results$`Model 1, l = ∞`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M1.L00,quarts.M1.L00[1],quarts.M1.L00[2])
 
 
-med.M2.L00<-median(M2.L00.Err/normIV)
-quarts.M2.L00<-quantile(M2.L00.Err/normIV, c(.25,.75))
+    med.M2.L00<-median(M2.L00.Err/normIV)
+    quarts.M2.L00<-quantile(M2.L00.Err/normIV, c(.25,.75))
 
-results$`Model 2, l = ∞`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M2.L00,quarts.M2.L00[1],quarts.M2.L00[2])
+    results$`Model 2, l = ∞`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M2.L00,quarts.M2.L00[1],quarts.M2.L00[2])
 
 
-med.M3.L3<-median(M3.L3.Err/normIV)
-quarts.M3.L3<-quantile(M3.L3.Err/normIV, c(.25,.75))
+    med.M3.L3<-median(M3.L3.Err/normIV)
+    quarts.M3.L3<-quantile(M3.L3.Err/normIV, c(.25,.75))
 
-results$`Model 3, l = 3`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M3.L3,quarts.M3.L3[1],quarts.M3.L3[2])
+    results$`Model 3, l = 3`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M3.L3,quarts.M3.L3[1],quarts.M3.L3[2])
 
 
-med.M3.L4<-median(M3.L4.Err/normIV)
-quarts.M3.L4<-quantile(M3.L4.Err/normIV, c(.25,.75))
+    med.M3.L4<-median(M3.L4.Err/normIV)
+    quarts.M3.L4<-quantile(M3.L4.Err/normIV, c(.25,.75))
 
-results$`Model 3, l = 4`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M3.L4,quarts.M3.L4[1],quarts.M3.L4[2])
+    results$`Model 3, l = 4`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M3.L4,quarts.M3.L4[1],quarts.M3.L4[2])
 
 
-med.M3.L5<-median(M3.L5.Err/normIV)
-quarts.M3.L5<-quantile(M3.L5.Err/normIV, c(.25,.75))
+    med.M3.L5<-median(M3.L5.Err/normIV)
+    quarts.M3.L5<-quantile(M3.L5.Err/normIV, c(.25,.75))
 
-results$`Model 3, l = 5`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M3.L5,quarts.M3.L5[1],quarts.M3.L5[2])
+    results$`Model 3, l = 5`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M3.L5,quarts.M3.L5[1],quarts.M3.L5[2])
 
 
-med.M4.L3<-median(M4.L3.Err/normIV)
-quarts.M4.L3<-quantile(M4.L3.Err/normIV, c(.25,.75))
+    med.M4.L3<-median(M4.L3.Err/normIV)
+    quarts.M4.L3<-quantile(M4.L3.Err/normIV, c(.25,.75))
 
-results$`Model 4, l = 3`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M4.L3,quarts.M4.L3[1],quarts.M4.L3[2])
+    results$`Model 4, l = 3`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M4.L3,quarts.M4.L3[1],quarts.M4.L3[2])
 
 
-med.M4.L4<-median(M4.L4.Err/normIV)
-quarts.M4.L4<-quantile(M4.L4.Err/normIV, c(.25,.75))
+    med.M4.L4<-median(M4.L4.Err/normIV)
+    quarts.M4.L4<-quantile(M4.L4.Err/normIV, c(.25,.75))
 
-results$`Model 4, l = 4`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M4.L4,quarts.M4.L4[1],quarts.M4.L4[2])
+    results$`Model 4, l = 4`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M4.L4,quarts.M4.L4[1],quarts.M4.L4[2])
 
 
 
-med.M4.L5<-median(M4.L5.Err/normIV)
-quarts.M4.L5<-quantile(M4.L5.Err/normIV, c(.25,.75))
+    med.M4.L5<-median(M4.L5.Err/normIV)
+    quarts.M4.L5<-quantile(M4.L5.Err/normIV, c(.25,.75))
 
-results$`Model 4, l = 5`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M4.L5,quarts.M4.L5[1],quarts.M4.L5[2])
+    results$`Model 4, l = 5`[1]<- sprintf("%.3f (%.3f, %.3f)", med.M4.L5,quarts.M4.L5[1],quarts.M4.L5[2])
 
 
-#####Dimensions for 85%
+    #####Dimensions for 85%
 
-med.dim.M1.L00.85 <- median(M1.L00.dimensionality.85)
-quarts.dim.M1.L00.85<-quantile(M1.L00.dimensionality.85, c(.25,.75))
+    med.dim.M1.L00.85 <- median(M1.L00.dimensionality.85)
+    quarts.dim.M1.L00.85<-quantile(M1.L00.dimensionality.85, c(.25,.75))
 
-results$`Model 1, l = ∞`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M1.L00.85,quarts.dim.M1.L00.85[1],quarts.dim.M1.L00.85[2])
+    results$`Model 1, l = ∞`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M1.L00.85,quarts.dim.M1.L00.85[1],quarts.dim.M1.L00.85[2])
 
 
-med.dim.M2.L00.85 <- median(M2.L00.dimensionality.85)
-quarts.dim.M2.L00.85 <-quantile(M2.L00.dimensionality.85, c(.25,.75))
+    med.dim.M2.L00.85 <- median(M2.L00.dimensionality.85)
+    quarts.dim.M2.L00.85 <-quantile(M2.L00.dimensionality.85, c(.25,.75))
 
-results$`Model 2, l = ∞`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M2.L00.85,quarts.dim.M2.L00.85[1],quarts.dim.M2.L00.85[2])
+    results$`Model 2, l = ∞`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M2.L00.85,quarts.dim.M2.L00.85[1],quarts.dim.M2.L00.85[2])
 
 
-med.dim.M3.L3.85 <- median(M3.L3.dimensionality.85)
-quarts.dim.M3.L3.85 <-quantile(M3.L3.dimensionality.85, c(.25,.75))
+    med.dim.M3.L3.85 <- median(M3.L3.dimensionality.85)
+    quarts.dim.M3.L3.85 <-quantile(M3.L3.dimensionality.85, c(.25,.75))
 
-results$`Model 3, l = 3`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L3.85,quarts.dim.M3.L3.85[1],quarts.dim.M3.L3.85[2])
+    results$`Model 3, l = 3`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L3.85,quarts.dim.M3.L3.85[1],quarts.dim.M3.L3.85[2])
 
 
-med.dim.M3.L4.85 <- median(M3.L4.dimensionality.85)
-quarts.dim.M3.L4.85<-quantile(M3.L4.dimensionality.85, c(.25,.75))
+    med.dim.M3.L4.85 <- median(M3.L4.dimensionality.85)
+    quarts.dim.M3.L4.85<-quantile(M3.L4.dimensionality.85, c(.25,.75))
 
-results$`Model 3, l = 4`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L4.85,quarts.dim.M3.L4.85[1],quarts.dim.M3.L4.85[2])
+    results$`Model 3, l = 4`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L4.85,quarts.dim.M3.L4.85[1],quarts.dim.M3.L4.85[2])
 
 
-med.dim.M3.L5.85 <- median(M3.L5.dimensionality.85)
-quarts.dim.M3.L5.85 <-quantile(M3.L5.dimensionality.85, c(.25,.75))
+    med.dim.M3.L5.85 <- median(M3.L5.dimensionality.85)
+    quarts.dim.M3.L5.85 <-quantile(M3.L5.dimensionality.85, c(.25,.75))
 
-results$`Model 3, l = 5`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L5.85,quarts.dim.M3.L5.85[1],quarts.dim.M3.L5.85[2])
+    results$`Model 3, l = 5`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L5.85,quarts.dim.M3.L5.85[1],quarts.dim.M3.L5.85[2])
 
 
-med.dim.M4.L3.85 <- median(M4.L3.dimensionality.85)
-quarts.dim.M4.L3.85<-quantile(M4.L3.dimensionality.85, c(.25,.75))
+    med.dim.M4.L3.85 <- median(M4.L3.dimensionality.85)
+    quarts.dim.M4.L3.85<-quantile(M4.L3.dimensionality.85, c(.25,.75))
 
-results$`Model 4, l = 3`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L3.85,quarts.dim.M4.L3.85[1],quarts.dim.M4.L3.85[2])
+    results$`Model 4, l = 3`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L3.85,quarts.dim.M4.L3.85[1],quarts.dim.M4.L3.85[2])
 
 
-med.dim.M4.L4.85 <- median(M4.L4.dimensionality.85)
-quarts.dim.M4.L4.85<-quantile(M4.L4.dimensionality.85, c(.25,.75))
+    med.dim.M4.L4.85 <- median(M4.L4.dimensionality.85)
+    quarts.dim.M4.L4.85<-quantile(M4.L4.dimensionality.85, c(.25,.75))
 
-results$`Model 4, l = 4`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L4.85,quarts.dim.M4.L4.85[1],quarts.dim.M4.L4.85[2])
+    results$`Model 4, l = 4`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L4.85,quarts.dim.M4.L4.85[1],quarts.dim.M4.L4.85[2])
 
 
-med.dim.M4.L5.85 <- median(M4.L5.dimensionality.85)
-quarts.dim.M4.L5.85<-quantile(M4.L5.dimensionality.85, c(.25,.75))
+    med.dim.M4.L5.85 <- median(M4.L5.dimensionality.85)
+    quarts.dim.M4.L5.85<-quantile(M4.L5.dimensionality.85, c(.25,.75))
 
-results$`Model 4, l = 5`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L5.85,quarts.dim.M4.L5.85[1],quarts.dim.M4.L5.85[2])
+    results$`Model 4, l = 5`[2]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L5.85,quarts.dim.M4.L5.85[1],quarts.dim.M4.L5.85[2])
 
 
 
-#####Dimensions for 90%
+    #####Dimensions for 90%
 
-med.dim.M1.L00.90 <- median(M1.L00.dimensionality.90)
-quarts.dim.M1.L00.90<-quantile(M1.L00.dimensionality.90, c(.25,.75))
+    med.dim.M1.L00.90 <- median(M1.L00.dimensionality.90)
+    quarts.dim.M1.L00.90<-quantile(M1.L00.dimensionality.90, c(.25,.75))
 
-results$`Model 1, l = ∞`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M1.L00.90,quarts.dim.M1.L00.90[1],quarts.dim.M1.L00.90[2])
+    results$`Model 1, l = ∞`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M1.L00.90,quarts.dim.M1.L00.90[1],quarts.dim.M1.L00.90[2])
 
 
-med.dim.M2.L00.90 <- median(M2.L00.dimensionality.90)
-quarts.dim.M2.L00.90 <-quantile(M2.L00.dimensionality.90, c(.25,.75))
+    med.dim.M2.L00.90 <- median(M2.L00.dimensionality.90)
+    quarts.dim.M2.L00.90 <-quantile(M2.L00.dimensionality.90, c(.25,.75))
 
-results$`Model 2, l = ∞`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M2.L00.90,quarts.dim.M2.L00.90[1],quarts.dim.M2.L00.90[2])
+    results$`Model 2, l = ∞`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M2.L00.90,quarts.dim.M2.L00.90[1],quarts.dim.M2.L00.90[2])
 
 
-med.dim.M3.L3.90 <- median(M3.L3.dimensionality.90)
-quarts.dim.M3.L3.90 <-quantile(M3.L3.dimensionality.90, c(.25,.75))
+    med.dim.M3.L3.90 <- median(M3.L3.dimensionality.90)
+    quarts.dim.M3.L3.90 <-quantile(M3.L3.dimensionality.90, c(.25,.75))
 
-results$`Model 3, l = 3`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L3.90,quarts.dim.M3.L3.90[1],quarts.dim.M3.L3.90[2])
+    results$`Model 3, l = 3`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L3.90,quarts.dim.M3.L3.90[1],quarts.dim.M3.L3.90[2])
 
 
-med.dim.M3.L4.90 <- median(M3.L4.dimensionality.90)
-quarts.dim.M3.L4.90<-quantile(M3.L4.dimensionality.90, c(.25,.75))
+    med.dim.M3.L4.90 <- median(M3.L4.dimensionality.90)
+    quarts.dim.M3.L4.90<-quantile(M3.L4.dimensionality.90, c(.25,.75))
 
-results$`Model 3, l = 4`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L4.90,quarts.dim.M3.L4.90[1],quarts.dim.M3.L4.90[2])
+    results$`Model 3, l = 4`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L4.90,quarts.dim.M3.L4.90[1],quarts.dim.M3.L4.90[2])
 
 
-med.dim.M3.L5.90 <- median(M3.L5.dimensionality.90)
-quarts.dim.M3.L5.90 <-quantile(M3.L5.dimensionality.90, c(.25,.75))
+    med.dim.M3.L5.90 <- median(M3.L5.dimensionality.90)
+    quarts.dim.M3.L5.90 <-quantile(M3.L5.dimensionality.90, c(.25,.75))
 
-results$`Model 3, l = 5`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L5.90,quarts.dim.M3.L5.90[1],quarts.dim.M3.L5.90[2])
+    results$`Model 3, l = 5`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L5.90,quarts.dim.M3.L5.90[1],quarts.dim.M3.L5.90[2])
 
 
-med.dim.M4.L3.90 <- median(M4.L3.dimensionality.90)
-quarts.dim.M4.L3.90<-quantile(M4.L3.dimensionality.90, c(.25,.75))
+    med.dim.M4.L3.90 <- median(M4.L3.dimensionality.90)
+    quarts.dim.M4.L3.90<-quantile(M4.L3.dimensionality.90, c(.25,.75))
 
-results$`Model 4, l = 3`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L3.90,quarts.dim.M4.L3.90[1],quarts.dim.M4.L3.90[2])
+    results$`Model 4, l = 3`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L3.90,quarts.dim.M4.L3.90[1],quarts.dim.M4.L3.90[2])
 
 
-med.dim.M4.L4.90 <- median(M4.L4.dimensionality.90)
-quarts.dim.M4.L4.90<-quantile(M4.L4.dimensionality.90, c(.25,.75))
+    med.dim.M4.L4.90 <- median(M4.L4.dimensionality.90)
+    quarts.dim.M4.L4.90<-quantile(M4.L4.dimensionality.90, c(.25,.75))
 
-results$`Model 4, l = 4`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L4.90,quarts.dim.M4.L4.90[1],quarts.dim.M4.L4.90[2])
+    results$`Model 4, l = 4`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L4.90,quarts.dim.M4.L4.90[1],quarts.dim.M4.L4.90[2])
 
 
-med.dim.M4.L5.90 <- median(M4.L5.dimensionality.90)
-quarts.dim.M4.L5.90<-quantile(M4.L5.dimensionality.90, c(.25,.75))
+    med.dim.M4.L5.90 <- median(M4.L5.dimensionality.90)
+    quarts.dim.M4.L5.90<-quantile(M4.L5.dimensionality.90, c(.25,.75))
 
-results$`Model 4, l = 5`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L5.90,quarts.dim.M4.L5.90[1],quarts.dim.M4.L5.90[2])
+    results$`Model 4, l = 5`[3]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L5.90,quarts.dim.M4.L5.90[1],quarts.dim.M4.L5.90[2])
 
 
 
-#####Dimensions for 95%
+    #####Dimensions for 95%
 
-med.dim.M1.L00.95 <- median(M1.L00.dimensionality.95)
-quarts.dim.M1.L00.95<-quantile(M1.L00.dimensionality.95, c(.25,.75))
+    med.dim.M1.L00.95 <- median(M1.L00.dimensionality.95)
+    quarts.dim.M1.L00.95<-quantile(M1.L00.dimensionality.95, c(.25,.75))
 
-results$`Model 1, l = ∞`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M1.L00.95,quarts.dim.M1.L00.95[1],quarts.dim.M1.L00.95[2])
+    results$`Model 1, l = ∞`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M1.L00.95,quarts.dim.M1.L00.95[1],quarts.dim.M1.L00.95[2])
 
 
-med.dim.M2.L00.95 <- median(M2.L00.dimensionality.95)
-quarts.dim.M2.L00.95 <-quantile(M2.L00.dimensionality.95, c(.25,.75))
+    med.dim.M2.L00.95 <- median(M2.L00.dimensionality.95)
+    quarts.dim.M2.L00.95 <-quantile(M2.L00.dimensionality.95, c(.25,.75))
 
-results$`Model 2, l = ∞`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M2.L00.95,quarts.dim.M2.L00.95[1],quarts.dim.M2.L00.95[2])
+    results$`Model 2, l = ∞`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M2.L00.95,quarts.dim.M2.L00.95[1],quarts.dim.M2.L00.95[2])
 
 
-med.dim.M3.L3.95 <- median(M3.L3.dimensionality.95)
-quarts.dim.M3.L3.95 <-quantile(M3.L3.dimensionality.95, c(.25,.75))
+    med.dim.M3.L3.95 <- median(M3.L3.dimensionality.95)
+    quarts.dim.M3.L3.95 <-quantile(M3.L3.dimensionality.95, c(.25,.75))
 
-results$`Model 3, l = 3`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L3.95,quarts.dim.M3.L3.95[1],quarts.dim.M3.L3.95[2])
+    results$`Model 3, l = 3`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L3.95,quarts.dim.M3.L3.95[1],quarts.dim.M3.L3.95[2])
 
 
-med.dim.M3.L4.95 <- median(M3.L4.dimensionality.95)
-quarts.dim.M3.L4.95<-quantile(M3.L4.dimensionality.95, c(.25,.75))
+    med.dim.M3.L4.95 <- median(M3.L4.dimensionality.95)
+    quarts.dim.M3.L4.95<-quantile(M3.L4.dimensionality.95, c(.25,.75))
 
-results$`Model 3, l = 4`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L4.95,quarts.dim.M3.L4.95[1],quarts.dim.M3.L4.95[2])
+    results$`Model 3, l = 4`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L4.95,quarts.dim.M3.L4.95[1],quarts.dim.M3.L4.95[2])
 
 
-med.dim.M3.L5.95 <- median(M3.L5.dimensionality.95)
-quarts.dim.M3.L5.95 <-quantile(M3.L5.dimensionality.95, c(.25,.75))
+    med.dim.M3.L5.95 <- median(M3.L5.dimensionality.95)
+    quarts.dim.M3.L5.95 <-quantile(M3.L5.dimensionality.95, c(.25,.75))
 
-results$`Model 3, l = 5`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L5.95,quarts.dim.M3.L5.95[1],quarts.dim.M3.L5.95[2])
+    results$`Model 3, l = 5`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L5.95,quarts.dim.M3.L5.95[1],quarts.dim.M3.L5.95[2])
 
 
-med.dim.M4.L3.95 <- median(M4.L3.dimensionality.95)
-quarts.dim.M4.L3.95<-quantile(M4.L3.dimensionality.95, c(.25,.75))
+    med.dim.M4.L3.95 <- median(M4.L3.dimensionality.95)
+    quarts.dim.M4.L3.95<-quantile(M4.L3.dimensionality.95, c(.25,.75))
 
-results$`Model 4, l = 3`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L3.95,quarts.dim.M4.L3.95[1],quarts.dim.M4.L3.95[2])
+    results$`Model 4, l = 3`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L3.95,quarts.dim.M4.L3.95[1],quarts.dim.M4.L3.95[2])
 
 
-med.dim.M4.L4.95 <- median(M4.L4.dimensionality.95)
-quarts.dim.M4.L4.95<-quantile(M4.L4.dimensionality.95, c(.25,.75))
+    med.dim.M4.L4.95 <- median(M4.L4.dimensionality.95)
+    quarts.dim.M4.L4.95<-quantile(M4.L4.dimensionality.95, c(.25,.75))
 
-results$`Model 4, l = 4`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L4.95,quarts.dim.M4.L4.95[1],quarts.dim.M4.L4.95[2])
+    results$`Model 4, l = 4`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L4.95,quarts.dim.M4.L4.95[1],quarts.dim.M4.L4.95[2])
 
 
-med.dim.M4.L5.95 <- median(M4.L5.dimensionality.95)
-quarts.dim.M4.L5.95<-quantile(M4.L5.dimensionality.95, c(.25,.75))
+    med.dim.M4.L5.95 <- median(M4.L5.dimensionality.95)
+    quarts.dim.M4.L5.95<-quantile(M4.L5.dimensionality.95, c(.25,.75))
 
-results$`Model 4, l = 5`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L5.95,quarts.dim.M4.L5.95[1],quarts.dim.M4.L5.95[2])
+    results$`Model 4, l = 5`[4]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L5.95,quarts.dim.M4.L5.95[1],quarts.dim.M4.L5.95[2])
 
 
-#####Dimensions for 99%
+    #####Dimensions for 99%
 
-med.dim.M1.L00.99 <- median(M1.L00.dimensionality.99)
-quarts.dim.M1.L00.99<-quantile(M1.L00.dimensionality.99, c(.25,.75))
+    med.dim.M1.L00.99 <- median(M1.L00.dimensionality.99)
+    quarts.dim.M1.L00.99<-quantile(M1.L00.dimensionality.99, c(.25,.75))
 
-results$`Model 1, l = ∞`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M1.L00.99,quarts.dim.M1.L00.99[1],quarts.dim.M1.L00.99[2])
+    results$`Model 1, l = ∞`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M1.L00.99,quarts.dim.M1.L00.99[1],quarts.dim.M1.L00.99[2])
 
 
-med.dim.M2.L00.99 <- median(M2.L00.dimensionality.99)
-quarts.dim.M2.L00.99 <-quantile(M2.L00.dimensionality.99, c(.25,.75))
+    med.dim.M2.L00.99 <- median(M2.L00.dimensionality.99)
+    quarts.dim.M2.L00.99 <-quantile(M2.L00.dimensionality.99, c(.25,.75))
 
-results$`Model 2, l = ∞`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M2.L00.99,quarts.dim.M2.L00.99[1],quarts.dim.M2.L00.99[2])
+    results$`Model 2, l = ∞`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M2.L00.99,quarts.dim.M2.L00.99[1],quarts.dim.M2.L00.99[2])
 
 
-med.dim.M3.L3.99 <- median(M3.L3.dimensionality.99)
-quarts.dim.M3.L3.99 <-quantile(M3.L3.dimensionality.99, c(.25,.75))
+    med.dim.M3.L3.99 <- median(M3.L3.dimensionality.99)
+    quarts.dim.M3.L3.99 <-quantile(M3.L3.dimensionality.99, c(.25,.75))
 
-results$`Model 3, l = 3`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L3.99,quarts.dim.M3.L3.99[1],quarts.dim.M3.L3.99[2])
+    results$`Model 3, l = 3`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L3.99,quarts.dim.M3.L3.99[1],quarts.dim.M3.L3.99[2])
 
 
-med.dim.M3.L4.99 <- median(M3.L4.dimensionality.99)
-quarts.dim.M3.L4.99<-quantile(M3.L4.dimensionality.99, c(.25,.75))
+    med.dim.M3.L4.99 <- median(M3.L4.dimensionality.99)
+    quarts.dim.M3.L4.99<-quantile(M3.L4.dimensionality.99, c(.25,.75))
 
-results$`Model 3, l = 4`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L4.99,quarts.dim.M3.L4.99[1],quarts.dim.M3.L4.99[2])
+    results$`Model 3, l = 4`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L4.99,quarts.dim.M3.L4.99[1],quarts.dim.M3.L4.99[2])
 
 
-med.dim.M3.L5.99 <- median(M3.L5.dimensionality.99)
-quarts.dim.M3.L5.99 <-quantile(M3.L5.dimensionality.99, c(.25,.75))
+    med.dim.M3.L5.99 <- median(M3.L5.dimensionality.99)
+    quarts.dim.M3.L5.99 <-quantile(M3.L5.dimensionality.99, c(.25,.75))
 
-results$`Model 3, l = 5`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L5.99,quarts.dim.M3.L5.99[1],quarts.dim.M3.L5.99[2])
+    results$`Model 3, l = 5`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M3.L5.99,quarts.dim.M3.L5.99[1],quarts.dim.M3.L5.99[2])
 
 
-med.dim.M4.L3.99 <- median(M4.L3.dimensionality.99)
-quarts.dim.M4.L3.99<-quantile(M4.L3.dimensionality.99, c(.25,.75))
+    med.dim.M4.L3.99 <- median(M4.L3.dimensionality.99)
+    quarts.dim.M4.L3.99<-quantile(M4.L3.dimensionality.99, c(.25,.75))
 
-results$`Model 4, l = 3`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L3.99,quarts.dim.M4.L3.99[1],quarts.dim.M4.L3.99[2])
+    results$`Model 4, l = 3`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L3.99,quarts.dim.M4.L3.99[1],quarts.dim.M4.L3.99[2])
 
 
-med.dim.M4.L4.99 <- median(M4.L4.dimensionality.99)
-quarts.dim.M4.L4.99<-quantile(M4.L4.dimensionality.99, c(.25,.75))
+    med.dim.M4.L4.99 <- median(M4.L4.dimensionality.99)
+    quarts.dim.M4.L4.99<-quantile(M4.L4.dimensionality.99, c(.25,.75))
 
-results$`Model 4, l = 4`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L4.99,quarts.dim.M4.L4.99[1],quarts.dim.M4.L4.99[2])
+    results$`Model 4, l = 4`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L4.99,quarts.dim.M4.L4.99[1],quarts.dim.M4.L4.99[2])
 
 
-med.dim.M4.L5.99 <- median(M4.L5.dimensionality.99)
-quarts.dim.M4.L5.99<-quantile(M4.L5.dimensionality.99, c(.25,.75))
+    med.dim.M4.L5.99 <- median(M4.L5.dimensionality.99)
+    quarts.dim.M4.L5.99<-quantile(M4.L5.dimensionality.99, c(.25,.75))
 
-results$`Model 4, l = 5`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L5.99,quarts.dim.M4.L5.99[1],quarts.dim.M4.L5.99[2])
-}
+    results$`Model 4, l = 5`[5]<- sprintf("%.3f (%.3f, %.3f)", med.dim.M4.L5.99,quarts.dim.M4.L5.99[1],quarts.dim.M4.L5.99[2])
+  }
 
   #S2
   {
@@ -2244,8 +2253,52 @@ View(results)
 
   plot(x=1:10, y=factorexpl, type = "b" ,main = "expl.var.: Q vs excess ret. pcs" , ylab = "explained var.")
   points(x=1:10, y=median.excess.explavar1, type = "b" , pch = 24)
-  }#Create Screeplots
-
-write.csv(results, "results/simulation_results.csv", row.names = FALSE)
+}#Create Screeplots
 
 
+
+
+write.csv(results, "results/simulation_results_leverage.csv", row.names = FALSE)
+
+
+
+
+
+###For comparing the eigenvalue decays of q.50 and the r^2 q.50 + (1-r^2) v\%*\%t(v)
+EXPL.VAR.TRUE<- cumsum(eigen(DATA$IV, only.values = TRUE)$values)/sum(eigen(DATA$IV, only.values = TRUE)$values)
+EXPL.VAR.Q<- cumsum(eigen(q.50, only.values = TRUE)$values)/sum(eigen(q.50, only.values = TRUE)$values)
+
+plot(EXPL.VAR.Q[1:10],
+     ylab = "Explained Variation",
+     xlab = "Factors",
+     type = "b",
+     pch = 20,
+     bg = "black",
+     col = "black",
+     lwd = 1.5,
+     cex = 1.1,
+     cex.lab = 0.9,
+     cex.axis = 0.8)
+lines(EXPL.VAR.TRUE[1:10],
+      type = "b",
+      pch = 18,
+      lwd = 1.5,
+      cex = 1.1)
+
+# Legend
+legend("bottomright",
+       legend = c(expression(r == 0), expression(r == -0.5)),
+       pch = c(20, 18),
+       pt.bg = c("black", "blue"),
+       col = c("black", "black"),
+       lty = 1,
+       lwd = 1.5,
+       pt.cex = 1.2,
+       cex = 0.8,        # text size in legend
+       bty = "n")        # remove legend box
+#For checking the true threshholds of explained variation for r^2 q.50 + (1-r^2) v\%*\%t(v)
+
+which.max(EXPL.VAR.TRUE>.85)
+which.max(EXPL.VAR.TRUE>.90)
+which.max(EXPL.VAR.TRUE>.95)
+which.max(EXPL.VAR.TRUE>.99)
