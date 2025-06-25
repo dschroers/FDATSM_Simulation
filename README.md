@@ -40,27 +40,4 @@ Install them using:
 
 ```r
 install.packages(c("MASS", "matrixcalc", "pracma", "npreg", "splines"))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+```
